@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<csp_whitelist xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:module:Magento_Csp:etc/csp_whitelist.xsd">
+    <policies>
+        <policy id="img-src">
+            <values>
+                <value id="pinelab_url" type="host">www.pinelabs.com</value>
+                <value id="pinelab_logo" type="host">https://www.pinelabs.com/img/logo.png</value>
+            </values>
+        </policy> 
+         <policy id="form-action">
+            <values>
+                <value id="pinelab-connect" type="host">uat.pinepg.in</value>
+                <value id="magento-connect" type="host">https://uat.pinepg.in/api/PG/V2</value>
+            </values> 
+            <values>
+                <value id="pinelab-connect-prod" type="host">pinepg.in</value>
+                <value id="magento-connect-prod" type="host">https://pinepg.in/api/PG/V2</value>
+            </values>
+            <values>
+                <value id="pinelab-connect-prod" type="host">secure.pinepg.in</value>
+                <value id="magento-connect-prod" type="host">https://secure.pinepg.in/payment</value>
+            </values>
+        </policy>
+    </policies>
+</csp_whitelist>
