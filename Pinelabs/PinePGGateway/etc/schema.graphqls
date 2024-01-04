@@ -1,0 +1,114 @@
+type StoreConfig @doc(description: "The type contains information about a store config") {
+    pinepg_merchant_id: String @doc(description: "pinepg Mertchant ID")
+    pinepg_access_code: String @doc(description: "pinepg Merchant Access Code")
+    pinepg_secret: String @doc(description: "pinepg Merchant Secret")
+}
+
+type Mutation {
+	placePineOrder (order_id: String @doc(description: "order_id to generate PinePG Order ID.")) : Transaction @resolver( class: "Pinelabs\\PinePGGateway\\Model\\Resolver\\PlacePineOrder") @doc(description: "Place PinePG Order with cart amount and currency.")
+}
+
+type Transaction {
+    success: Boolean!
+    action: String
+    ppc_Amount: Float
+    ppc_CustomerAddressPIN: String
+    ppc_CustomerCity: String
+    ppc_CustomerCountry: String
+    ppc_CustomerEmail: String
+    ppc_CustomerFirstName: String
+    ppc_CustomerLastName: String
+    ppc_CustomerMobile: String
+    ppc_CustomerState: String
+    ppc_LPC_SEQ: String
+    ppc_MerchantAccessCode: String
+    ppc_MerchantID: String
+    ppc_MerchantProductInfo: String
+    ppc_MerchantReturnURL: String
+    ppc_MultiCartProductDetails: String
+    ppc_NavigationMode: String
+    ppc_PayModeOnLandingPage: String
+    ppc_Product_Code: String
+    ppc_ShippingCity: String
+    ppc_ShippingCountry: String
+    ppc_ShippingFirstName: String
+    ppc_ShippingLastName: String
+    ppc_ShippingPhoneNumer: String
+    ppc_ShippingState: String
+    ppc_ShippingZipCode: String
+    ppc_TransactionType: String
+    ppc_UdfField1: String
+    ppc_UdfField2: String
+    ppc_UniqueMerchantTxnID: String
+    ppc_DIA_SECRET_TYPE: String
+    ppc_DIA_SECRET: String
+}
+
+type Query {
+  emiOfferCalculator (merchantData: MerchantDataInput
+    paymentData: PaymentDataInput
+    productDetails: [ProductDetailsInput] @doc(description: "get product details for fetch emi offers")) : issuer @resolver( class: "Pinelabs\\PinePGGateway\\Model\\Resolver\\EmiOfferCalculator") @doc(description: "Place PinePG Order with cart amount and currency.") 
+}
+
+
+# EMI Offers GraphQL
+input MerchantDataInput {
+  merchantId: Int!
+  merchantAccessCode: String!
+}
+
+input PaymentDataInput {
+  amountInPaisa: Int!
+}
+
+input ProductDetailsInput {
+  productCode: String!
+  productAmount: Int!
+}
+
+type issuer {
+  issuer: [Issuer]!
+  response_message: String!
+}
+
+type Issuer {
+  list_emi_tenure: [list_emi_tenure!]!
+  issuer_name: String!
+  is_debit_emi_issuer: Boolean!
+}
+
+type list_emi_tenure {
+  tenure_id: String
+  tenure_in_month: String
+  monthly_installment: Int
+  bank_interest_rate: Int
+  interest_pay_to_bank: Int
+  total_offerred_discount_cashback_amount: Int
+  loan_amount: Int
+  auth_amount: Int
+  offer_scheme: offer_scheme!
+}
+
+type offer_scheme {
+  product_details: [product_details!]!
+  emi_scheme: emi_scheme!
+}
+
+type product_details {
+  schemes: [String!]!
+  product_code: String!
+  product_amount: Int!
+  subvention_cashback_discount: Int
+  product_discount: Int
+  subvention_cashback_discount_percentage: Int
+  product_discount_percentage: Int
+  subvention_type: Int
+  bank_interest_rate_percentage: Int
+  bank_interest_rate: Int
+}
+
+type emi_scheme {
+  scheme_id: Int!
+  program_type: Int!
+  is_scheme_valid: Boolean!
+}

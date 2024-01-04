@@ -1,0 +1,19 @@
+
+
+<div class="checkout-success">
+<?php if($order->getIncrementId()):?>
+
+    <?php if ($block->getCustomerId()) :?>
+        <p>
+            <?=  __('Your order number is: '.$order->getIncrementId()) ?>
+        </p>
+    <?php  else :?>
+            <p>
+                <?= __('Your order # is: <span>%1</span>.',$order->getIncrementId()) ?>
+            </p>
+    <?php endif;?>
+    <p>
+        <?= __('We\'ll email you an order confirmation with details and tracking info.') ?>
+    </p>
+<?php endif;?>
+</div>

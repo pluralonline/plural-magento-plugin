@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<!--
+/**
+ * Copyright © 2016 Magento. All rights reserved.
+ * See COPYING.txt for license details.
+ */
+-->
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:framework:ObjectManager/etc/config.xsd">
+    <type name="Magento\StoreGraphQl\Model\Resolver\Store\StoreConfigDataProvider">
+        <arguments>
+            <argument name="extendedConfigData" xsi:type="array">
+                <item name="pinepg_merchant_id" xsi:type="string">payment/pinepgpaymentmethod/MerchantId</item>
+                <item name="pinepg_access_code" xsi:type="string">payment/pinepgpaymentmethod/MerchantAccessCode</item>
+                <item name="pinepg_secret" xsi:type="string">payment/pinepgpaymentmethod/MerchantSecretKey</item>
+            </argument>
+        </arguments>
+    </type>
+</config>

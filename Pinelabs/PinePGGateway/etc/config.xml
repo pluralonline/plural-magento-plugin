@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<!--
+/**
+ * Copyright © 2015 Magento. All rights reserved.
+ * See COPYING.txt for license details.
+ */
+-->
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../Store/etc/config.xsd">
+    <default>
+        <payment>
+                <pinepgpaymentmethod>
+                <active>1</active>
+                <title>Edge by Pine Labs</title>
+                <order_status>pending_payment</order_status>
+                <instructions>Instruction.</instructions>
+                <payment_action>true</payment_action>
+                <model>Pinelabs\PinePGGateway\Model\PinePGPaymentMethod</model>
+                <group>offline</group>
+
+                <MerchantId></MerchantId>
+                <MerchantAccessCode></MerchantAccessCode>
+                <MerchantSecretKey></MerchantSecretKey>
+				<webhook>1</webhook>
+                <redirect_url>pinepg/standard/redirect</redirect_url>
+                <return_url>pinepg/standard/response</return_url>
+                <cancel_url>pinepg/standard/cancel</cancel_url>
+				<production_url>https://secure.pinepg.in/payment</production_url>
+                <sandbox_url>https://uat.pinepg.in/PinePGRedirect/</sandbox_url>
+  
+            </pinepgpaymentmethod>
+            <!-- payment-config -->
+        </payment>
+    </default>
+</config>
