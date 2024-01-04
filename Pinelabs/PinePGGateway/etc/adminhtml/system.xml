@@ -1,0 +1,66 @@
+<?xml version="1.0"?>
+<!--
+/**
+ * Copyright © 2015 Magento. All rights reserved.
+ * See COPYING.txt for license details.
+ */
+-->
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../Config/etc/system_file.xsd">
+    <system>
+        <section id="payment">
+            <group id="pinepgpaymentmethod" translate="label" type="text" sortOrder="100" showInDefault="1" showInWebsite="1" showInStore="1">
+                <label>Edge by Pine Labs</label>
+                <field id="active" translate="label" type="select" sortOrder="1" showInDefault="1" showInWebsite="1" showInStore="1">
+                    <label>Enabled</label>
+                    <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
+                </field>
+                <field id="title" translate="label" type="text" sortOrder="10" showInDefault="1" showInWebsite="1" showInStore="1">
+                    <label>Title</label>
+                </field>
+                <field id="cart" translate="label" type="select" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="0">
+                    <label>Select Cart Type</label>
+                  <source_model>Pinelabs\PinePGGateway\Model\Config\Source\Order\Status\PaymentCartType</source_model>
+                </field>
+                <field id="order_status" translate="label" type="select" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="0">
+                    <label>New Order Status</label>
+                    <source_model>Pinelabs\PinePGGateway\Model\Config\Source\Order\Status\Pendingpayment</source_model>
+                </field>
+                <field id="MerchantId" translate="label" type="text" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="0">
+                    <label>Merchant Id</label>
+                   
+                </field>
+                <field id="MerchantAccessCode" translate="label" type="password" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="0">
+                    <label>Merchant Access Code</label>
+                  
+                </field>
+				 <field id="MerchantSecretKey" translate="label" type="password" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="0">
+                    <label>Merchant Secret Key</label>
+                 
+                </field>
+				 <field id="MerchantPaymentMode" translate="label" type="text" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="0">
+                    <label>Merchant Payment Mode</label>
+                 
+                </field>
+				  <field id="PayEnvironment" translate="label" type="select" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="0">
+                    <label>Environment</label>
+                  <source_model>Pinelabs\PinePGGateway\Model\Config\Source\Order\Status\PaymentEnvironment</source_model>
+                </field>
+				<field id="production_url" translate="label" type="text" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="0">
+                    <label>Production URL</label>
+                 
+                </field>
+				<field id="sandbox_url" translate="label" type="text" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="0">
+                    <label>SandBox URL</label>
+                 
+                </field>
+                <field id="webhook" translate="label" sortOrder="115" type="select" showInDefault="1" showInWebsite="1" showInStore="1">
+                    <label>Webhook</label>
+                    <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
+                    <comment>URL: {{base_url}}/pinepg/standard/webhook</comment>
+                </field>
+                
+            </group>
+            <!-- payment-group -->
+        </section>
+    </system>
+</config>
