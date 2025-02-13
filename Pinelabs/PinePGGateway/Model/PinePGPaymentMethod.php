@@ -182,14 +182,19 @@ class PinePGPaymentMethod extends \Magento\Payment\Model\Method\AbstractMethod
 				$IsProductQuantityInCartMoreThanOne=true; 
 			} 
 			
+			$quantity = intval(explode('.',$product->getQtyOrdered())[0]);
+			for ($j = 0; $j < $quantity; $j++) {
 			$product_details = new \stdClass();
 
-			$quantity = explode('.',$product->getQtyOrdered())[0];
+			
 			$product_details->product_code = $product->getSku();
-			$product_details->product_amount = intval(floatval($product->getPrice()) * 100)*$quantity;
+			$product_details->product_amount = intval(floatval($product->getPrice()) * 100);
 			$product_info_data[$i] = $product_details;
-			$this->logger->info('quantity:'.$product->getDiscountAmount().'-discounts'.$quantity );	
 			$i++;
+			}
+			
+			$this->logger->info('quantity:'.$product->getDiscountAmount().'-discounts'.$quantity );	
+			
         }
 		
 		$this->logger->info('price:'.$product->getPrice() );	
