@@ -130,6 +130,31 @@ class PinePGPaymentMethod extends \Magento\Payment\Model\Method\AbstractMethod
 		$params['ppc_CustomerMobile'] 		= $billing_address->getData('telephone');
 
 		//set shipping address
+
+		if ($shipping_address) {
+			$params['ppc_ShippingFirstName']   = $shipping_address->getData('firstname');
+			$params['ppc_ShippingLastName']    = $shipping_address->getData('lastname');
+			$params['ppc_ShippingCity']        = $shipping_address->getData('city');
+			$params['ppc_ShippingState']       = $shipping_address->getData('region');
+			
+			$params['ppc_ShippingCountry']     = $shipping_address->getData('country_id');
+			$countryObj                        = $this->_countryHelper->loadByCode($params['ppc_ShippingCountry']);
+			$params['ppc_ShippingCountry']     = $countryObj->getName();
+			
+			$params['ppc_ShippingZipCode']     = $shipping_address->getData('postcode');
+			$params['ppc_ShippingPhoneNumer']  = $shipping_address->getData('telephone');
+		} else {
+			// Set defaults or skip shipping parameters for virtual products
+			$params['ppc_ShippingFirstName']   = '';
+			$params['ppc_ShippingLastName']    = '';
+			$params['ppc_ShippingCity']        = '';
+			$params['ppc_ShippingState']       = '';
+			$params['ppc_ShippingCountry']     = '';
+			$params['ppc_ShippingZipCode']     = '';
+			$params['ppc_ShippingPhoneNumer']  = '';
+		}
+
+		/*
 		$params['ppc_ShippingFirstName'] 	 = $shipping_address->getData('firstname');
 		$params['ppc_ShippingLastName'] 	 = $shipping_address->getData('lastname');
 		
@@ -142,6 +167,8 @@ class PinePGPaymentMethod extends \Magento\Payment\Model\Method\AbstractMethod
 		
 		$params['ppc_ShippingZipCode'] 	 	 = $shipping_address->getData('postcode');
 		$params['ppc_ShippingPhoneNumer']  	 = $shipping_address->getData('telephone');
+		*/
+
 
 		$params['ppc_UdfField1'] 			 = 'Magento_2.3.4';
         $params["ppc_MerchantAccessCode"] 	 = $this->getConfigData("MerchantAccessCode");
