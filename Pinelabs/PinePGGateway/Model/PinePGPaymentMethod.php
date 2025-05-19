@@ -165,6 +165,7 @@ class PinePGPaymentMethod extends \Magento\Payment\Model\Method\AbstractMethod
 		$params['ppc_Product_Code']  ='';
 		$product_info_data = [];
 		$i = 0;
+		$totalProductPrice=0;
 		foreach ($order->getAllVisibleItems()  as $product) {
 			$this->logger->info(__LINE__ . ' | '.__FUNCTION__.' Get Product code of item and check whether there is more than one item present in cart or not');
 			$totalOrders =$totalOrders+1;
@@ -186,7 +187,8 @@ class PinePGPaymentMethod extends \Magento\Payment\Model\Method\AbstractMethod
 			for ($j = 0; $j < $quantity; $j++) {
 			$product_details = new \stdClass();
 
-			
+			$eachProductPrice=intval(floatval($product->getPrice()) * 100);
+			$totalProductPrice=$totalProductPrice+$eachProductPrice;
 			$product_details->product_code = $product->getSku();
 			$product_details->product_amount = intval(floatval($product->getPrice()) * 100);
 			$product_info_data[$i] = $product_details;
@@ -196,6 +198,20 @@ class PinePGPaymentMethod extends \Magento\Payment\Model\Method\AbstractMethod
 			$this->logger->info('quantity:'.$product->getDiscountAmount().'-discounts'.$quantity );	
 			
         }
+
+//special handling for shipping and discount to show emi
+		$ppcAmount = $params["ppc_Amount"]; 
+		if($ppcAmount>$totalProductPrice){
+		$diffAmount = $ppcAmount - $totalProductPrice;
+		$product_info_data[0]->product_amount += $diffAmount;
+		}elseif($ppcAmount<$totalProductPrice){
+		$diffAmount = $totalProductPrice - $ppcAmount;
+		$firstProductPrice = $product_info_data[0]->product_amount;
+		if ($firstProductPrice >= $diffAmount) {
+			$product_info_data[0]->product_amount -= $diffAmount;
+		} 
+		}
+//special handling for shipping and discount to show emi
 		
 		$this->logger->info('price:'.$product->getPrice() );	
 		$params = $this->checkCartType($product_info_data,$params,$order);
@@ -420,6 +436,7 @@ class PinePGPaymentMethod extends \Magento\Payment\Model\Method\AbstractMethod
 
 				if($order->getDiscountAmount()){
 					$discount_val = abs($order->getDiscountAmount());
+					$discount_val =0;
 					$productTotalAmt_beforeDiscount = $params['ppc_Amount'] + ($discount_val*100);
 
 					$product_info_data = $this->calculation_on_items($product_info_data,$productTotalAmt_beforeDiscount,($discount_val*100));	
