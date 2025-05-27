@@ -15,7 +15,10 @@ class Redirect extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 			}
 		
 			$order = $this->getOrder();
-			$order->setState('processing')->setStatus('pending');
+			$order->setState(\Magento\Sales\Model\Order::STATE_NEW)
+      ->setStatus('pending');
+$order->addStatusHistoryComment(__('Order initiated by Pinelabs'))
+      ->setIsCustomerNotified(false);
 			$order->save();
 			$quote = $this->getQuote();
 			$email = $this->getRequest()->getParam('email');
