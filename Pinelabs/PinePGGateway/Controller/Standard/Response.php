@@ -63,13 +63,70 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
             $paymentMethod = $this->getPaymentMethod();
             $params = $this->getRequest()->getParams();
 
+            $this->logger->info('Full PinePG Response Params: ' . json_encode($params));
+
             $merchantTxnID = $params['ppc_UniqueMerchantTxnID'];
             $order_id = explode('_', $merchantTxnID);
             $order_id = $order_id[1]; //get order_id part
 
             $objectManager = \Magento\Framework\App\ObjectManager::getInstance();
 
-            $order = $objectManager->create('Magento\Sales\Api\Data\OrderInterface')->loadByIncrementId($order_id);
+            //$order = $objectManager->create('Magento\Sales\Api\Data\OrderInterface')->loadByIncrementId($order_id);
+            $order = $objectManager->create(\Magento\Sales\Model\Order::class)->loadByIncrementId($order_id);
+            $orderItemRepository = $objectManager->get(\Magento\Sales\Api\OrderItemRepositoryInterface::class);
+
+
+
+            if (isset($params['ppc_TxnAdditionalInfo'])) {
+                $this->logger->info('txnAdditionalInfo received: ' . $params['ppc_TxnAdditionalInfo']);
+            
+                $txnJson = base64_decode($params['ppc_TxnAdditionalInfo']);
+                $this->logger->info('Base64-decoded ppc_TxnAdditionalInfo: ' . $txnJson);
+            
+                $txnData = json_decode($txnJson, true);
+            
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    $this->logger->error('JSON decode error: ' . json_last_error_msg());
+                } else {
+                    $this->logger->info('Decoded txnAdditionalInfo JSON: ' . json_encode($txnData));
+                }
+            
+                if (isset($txnData['product_details']) && is_array($txnData['product_details'])) {
+                    $this->logger->info('product_details found with ' . count($txnData['product_details']) . ' item(s).');
+                    
+                    $items = $order->getAllItems();
+                    foreach ($items as $item) {
+                        foreach ($txnData['product_details'] as $productDetail) {
+                            if ($item->getSku() == $productDetail['product_code']) {
+                                $item->setData('pinepg_product_amount', $productDetail['product_amount'] / 100);
+                                $item->setData('pinepg_cashback_discount', $productDetail['subvention_cashback_discount'] / 100);
+                                $item->setData('pinepg_product_discount', $productDetail['product_discount'] / 100);
+                                $item->setData('pinepg_cashback_discount_percentage', $productDetail['subvention_cashback_discount_percentage']); // Leave as-is, it's already a %
+                                $item->setData('pinepg_oem_name', $productDetail['oem_name']);
+                                $item->setData('pinepg_oem_id', $productDetail['oem_id']);
+            
+                                $orderItemRepository = \Magento\Framework\App\ObjectManager::getInstance()
+                                    ->get(\Magento\Sales\Api\OrderItemRepositoryInterface::class);
+                                $orderItemRepository->save($item);
+            
+                                $this->logger->info('Saved item SKU: ' . $item->getSku() . ', Data: ' . json_encode([
+                                    'pinepg_product_amount' => $productDetail['product_amount'] / 100,
+                                    'pinepg_cashback_discount' => $productDetail['subvention_cashback_discount'] / 100,
+                                    'pinepg_product_discount' => $productDetail['product_discount'] / 100,
+                                    'pinepg_cashback_discount_percentage' => $productDetail['subvention_cashback_discount_percentage'],
+                                    'pinepg_oem_name' => $productDetail['oem_name'],
+                                    'pinepg_oem_id' => $productDetail['oem_id']
+                                ]));
+                            }
+                        }
+                    }
+                } else {
+                    $this->logger->warning('product_details not found or not an array in txnAdditionalInfo.');
+                }
+            } else {
+                $this->logger->info('txnAdditionalInfo not present in params.');
+            }
+            
 
             if(!$order->getCustomerIsGuest()) {
                 $customer = $this->customer->load($order->getCustomerId());
@@ -110,6 +167,11 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
                 $PayEnvironment = $this->pinePGPaymentMethod->getConfigData("PayEnvironment");
 
+                if (isset($params['ppc_CapturedAmount'])) {
+                    $order->setData('pinepg_captured_amount', $params['ppc_CapturedAmount'] / 100); // Divide by 100 if it's in paisa
+                    $order->save();
+                }
+
                 if (!PinePGVerify::verify($params,$PayEnvironment)) {
                     $this->_cancelPayment('Payment fails');
                     $resultRedirect->setPath('checkout/onepage/failure');
@@ -120,9 +182,12 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
                 $order->save();
 
+                
+
                 $payment = $order->getPayment();
 
                 $paymentMethod->postProcessing($order, $payment, $params);
+
 
                 $encryptedOrderId = $this->encryptor->encrypt($order->getId());
 
