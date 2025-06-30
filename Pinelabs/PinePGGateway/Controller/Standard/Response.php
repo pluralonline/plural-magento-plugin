@@ -78,53 +78,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
 
             if (isset($params['ppc_TxnAdditionalInfo'])) {
-                $this->logger->info('txnAdditionalInfo received: ' . $params['ppc_TxnAdditionalInfo']);
-            
-                $txnJson = base64_decode($params['ppc_TxnAdditionalInfo']);
-                $this->logger->info('Base64-decoded ppc_TxnAdditionalInfo: ' . $txnJson);
-            
-                $txnData = json_decode($txnJson, true);
-            
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    $this->logger->error('JSON decode error: ' . json_last_error_msg());
-                } else {
-                    $this->logger->info('Decoded txnAdditionalInfo JSON: ' . json_encode($txnData));
-                }
-            
-                if (isset($txnData['product_details']) && is_array($txnData['product_details'])) {
-                    $this->logger->info('product_details found with ' . count($txnData['product_details']) . ' item(s).');
-                    
-                    $items = $order->getAllItems();
-                    foreach ($items as $item) {
-                        foreach ($txnData['product_details'] as $productDetail) {
-                            if ($item->getSku() == $productDetail['product_code']) {
-                                $item->setData('pinepg_product_amount', $productDetail['product_amount'] / 100);
-                                $item->setData('pinepg_cashback_discount', $productDetail['subvention_cashback_discount'] / 100);
-                                $item->setData('pinepg_product_discount', $productDetail['product_discount'] / 100);
-                                $item->setData('pinepg_cashback_discount_percentage', $productDetail['subvention_cashback_discount_percentage']); // Leave as-is, it's already a %
-                                $item->setData('pinepg_oem_name', $productDetail['oem_name']);
-                                $item->setData('pinepg_oem_id', $productDetail['oem_id']);
-            
-                                $orderItemRepository = \Magento\Framework\App\ObjectManager::getInstance()
-                                    ->get(\Magento\Sales\Api\OrderItemRepositoryInterface::class);
-                                $orderItemRepository->save($item);
-            
-                                $this->logger->info('Saved item SKU: ' . $item->getSku() . ', Data: ' . json_encode([
-                                    'pinepg_product_amount' => $productDetail['product_amount'] / 100,
-                                    'pinepg_cashback_discount' => $productDetail['subvention_cashback_discount'] / 100,
-                                    'pinepg_product_discount' => $productDetail['product_discount'] / 100,
-                                    'pinepg_cashback_discount_percentage' => $productDetail['subvention_cashback_discount_percentage'],
-                                    'pinepg_oem_name' => $productDetail['oem_name'],
-                                    'pinepg_oem_id' => $productDetail['oem_id']
-                                ]));
-                            }
-                        }
-                    }
-                } else {
-                    $this->logger->warning('product_details not found or not an array in txnAdditionalInfo.');
-                }
-            } else {
-                $this->logger->info('txnAdditionalInfo not present in params.');
+                $this->processPinelabsDiscounts($order, $params['ppc_TxnAdditionalInfo']);
             }
             
 
@@ -168,8 +122,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
                 $PayEnvironment = $this->pinePGPaymentMethod->getConfigData("PayEnvironment");
 
                 if (isset($params['ppc_CapturedAmount'])) {
-                    $order->setData('pinepg_captured_amount', $params['ppc_CapturedAmount'] / 100); // Divide by 100 if it's in paisa
-                    $order->save();
+                    $this->processCapturedAmount($order, $params['ppc_CapturedAmount']);
                 }
 
                 if (!PinePGVerify::verify($params,$PayEnvironment)) {
@@ -215,4 +168,134 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
         return $resultRedirect;
     }
+
+
+    protected function processPinelabsDiscounts($order, $txnAdditionalInfo)
+{
+    $this->logger->info('Processing Pinelabs discounts');
+    
+    $txnJson = base64_decode($txnAdditionalInfo);
+    $txnData = json_decode($txnJson, true);
+    
+    if (!isset($txnData['product_details']) || !is_array($txnData['product_details'])) {
+        $this->logger->warning('No product details found in txnAdditionalInfo');
+        return;
+    }
+
+    $objectManager = \Magento\Framework\App\ObjectManager::getInstance();
+    $orderItemRepository = $objectManager->get(\Magento\Sales\Api\OrderItemRepositoryInterface::class);
+    
+    $totalGatewayDiscount = 0;
+    $items = $order->getAllItems();
+    
+    foreach ($items as $item) {
+        foreach ($txnData['product_details'] as $productDetail) {
+            if ($item->getSku() == $productDetail['product_code']) {
+                // Calculate discounts
+                $productDiscount = $productDetail['product_discount'] / 100;
+                $cashbackDiscount = $productDetail['subvention_cashback_discount'] / 100;
+                $totalItemDiscount = $productDiscount + $cashbackDiscount;
+                
+                // Native Magento discount fields
+                $item->setDiscountAmount($totalItemDiscount)
+                     ->setBaseDiscountAmount($totalItemDiscount)
+                     ->setOriginalDiscountAmount($totalItemDiscount);
+                
+                // Custom fields (preserved as per requirement)
+                $item->setData('pinepg_product_amount', $productDetail['product_amount'] / 100);
+                $item->setData('pinepg_cashback_discount', $cashbackDiscount);
+                $item->setData('pinepg_product_discount', $productDiscount);
+                $item->setData('pinepg_cashback_discount_percentage', $productDetail['subvention_cashback_discount_percentage']);
+                $item->setData('pinepg_oem_name', $productDetail['oem_name']);
+                $item->setData('pinepg_oem_id', $productDetail['oem_id']);
+                
+                // Adjust row totals
+                $rowTotal = ($item->getPrice() * $item->getQtyOrdered()) - $totalItemDiscount;
+                $item->setRowTotal($rowTotal)
+                     ->setBaseRowTotal($rowTotal);
+                
+                $totalGatewayDiscount += $totalItemDiscount;
+                
+                $orderItemRepository->save($item);
+                
+                $this->logger->info(sprintf(
+                    'Applied discounts to SKU %s: Product ₹%s + Cashback ₹%s = Total ₹%s',
+                    $item->getSku(),
+                    number_format($productDiscount, 2),
+                    number_format($cashbackDiscount, 2),
+                    number_format($totalItemDiscount, 2)
+                ));
+            }
+        }
+    }
+    
+    // Update order totals
+    if ($totalGatewayDiscount > 0) {
+        $order->setDiscountAmount($totalGatewayDiscount)
+              ->setBaseDiscountAmount($totalGatewayDiscount)
+              ->setSubtotalWithDiscount($order->getSubtotal() - $totalGatewayDiscount)
+              ->setBaseSubtotalWithDiscount($order->getBaseSubtotal() - $totalGatewayDiscount)
+              ->setDiscountDescription('Pinelabs Gateway Discount');
+        
+        // Recalculate totals to ensure consistency
+        $order->setGrandTotal($order->getSubtotal() + $order->getTaxAmount() + $order->getShippingAmount() - $totalGatewayDiscount)
+              ->setBaseGrandTotal($order->getBaseSubtotal() + $order->getBaseTaxAmount() + $order->getBaseShippingAmount() - $totalGatewayDiscount);
+        
+        $this->logger->info(sprintf(
+            'Order %s: Applied total gateway discount of ₹%s. New grand total: ₹%s',
+            $order->getIncrementId(),
+            number_format($totalGatewayDiscount, 2),
+            number_format($order->getGrandTotal(), 2)
+        ));
+    }
+}
+
+/**
+ * Process captured amount and verify totals
+ */
+protected function processCapturedAmount($order, $capturedAmount)
+{
+    $capturedAmount = $capturedAmount / 100;
+    $grandTotal = $order->getGrandTotal();
+    
+    // Store original captured amount in custom field
+    $order->setData('pinepg_captured_amount', $capturedAmount);
+    
+    // Verify amount matches (allow small rounding differences)
+    if (abs($capturedAmount - $grandTotal) > 0.01) {
+        $this->logger->warning(sprintf(
+            'Amount mismatch! Pinelabs captured ₹%s but order total is ₹%s',
+            number_format($capturedAmount, 2),
+            number_format($grandTotal, 2)
+        ));
+    }
+    
+    // Mark as fully paid
+    $order->setTotalPaid($grandTotal)
+          ->setBaseTotalPaid($grandTotal)
+          ->setState(\Magento\Sales\Model\Order::STATE_PROCESSING)
+          ->setStatus($order->getConfig()->getStateDefaultStatus(\Magento\Sales\Model\Order::STATE_PROCESSING));
+    
+    // Add payment transaction
+    $payment = $order->getPayment();
+    $payment->setAmountPaid($grandTotal)
+            ->setBaseAmountPaid($grandTotal)
+            ->setIsTransactionClosed(true);
+    
+    $payment->addTransaction(
+        \Magento\Sales\Model\Order\Payment\Transaction::TYPE_CAPTURE,
+        null,
+        true
+    );
+    
+    // Add order comment
+    $order->addCommentToStatusHistory(
+        sprintf('Pinelabs payment captured: ₹%s. Discount applied: ₹%s',
+            number_format($capturedAmount, 2),
+            number_format($order->getDiscountAmount(), 2)
+        ),
+        false
+    )->setIsCustomerNotified(true);
+}
+
 }
