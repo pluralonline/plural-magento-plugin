@@ -56,7 +56,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
         try {
 			if(!array_key_exists('ppc_UniqueMerchantTxnID', $this->getRequest()->getParams())) {
-				$resultRedirect->setPath('');
+				  $resultRedirect->setPath('/'); 
 				return $resultRedirect;
 			}
 
@@ -146,7 +146,13 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
                 $urlEncodedOrderId = $this->urlEncoder->encode($encryptedOrderId);
                
-                $resultRedirect->setPath('checkout/onepage/success');
+                $successUrl = $this->_url->getUrl('checkout/onepage/success');
+                if (filter_var($successUrl, FILTER_VALIDATE_URL)) {
+                    $resultRedirect->setPath('checkout/onepage/success');
+                } else {
+                    $resultRedirect->setPath('/');
+                    $this->logger->error('Invalid success URL generated');
+                }
 
                 try {
                     $orderSender = $objectManager->create('Magento\Sales\Model\Order\Email\Sender\OrderSender');
@@ -170,85 +176,124 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
     }
 
 
-    protected function processPinelabsDiscounts($order, $txnAdditionalInfo)
+ protected function processPinelabsDiscounts($order, $txnAdditionalInfo)
 {
     $this->logger->info('Processing Pinelabs discounts');
-    
-    $txnJson = base64_decode($txnAdditionalInfo);
-    $txnData = json_decode($txnJson, true);
-    
-    if (!isset($txnData['product_details']) || !is_array($txnData['product_details'])) {
-        $this->logger->warning('No product details found in txnAdditionalInfo');
-        return;
-    }
 
-    $objectManager = \Magento\Framework\App\ObjectManager::getInstance();
-    $orderItemRepository = $objectManager->get(\Magento\Sales\Api\OrderItemRepositoryInterface::class);
-    
-    $totalGatewayDiscount = 0;
-    $items = $order->getAllItems();
-    
-    foreach ($items as $item) {
-        foreach ($txnData['product_details'] as $productDetail) {
-            if ($item->getSku() == $productDetail['product_code']) {
-                // Calculate discounts
-                $productDiscount = $productDetail['product_discount'] / 100;
-                $cashbackDiscount = $productDetail['subvention_cashback_discount'] / 100;
-                $totalItemDiscount = $productDiscount + $cashbackDiscount;
-                
-                // Native Magento discount fields
-                $item->setDiscountAmount($totalItemDiscount)
-                     ->setBaseDiscountAmount($totalItemDiscount)
-                     ->setOriginalDiscountAmount($totalItemDiscount);
-                
-                // Custom fields (preserved as per requirement)
-                $item->setData('pinepg_product_amount', $productDetail['product_amount'] / 100);
-                $item->setData('pinepg_cashback_discount', $cashbackDiscount);
-                $item->setData('pinepg_product_discount', $productDiscount);
-                $item->setData('pinepg_cashback_discount_percentage', $productDetail['subvention_cashback_discount_percentage']);
-                $item->setData('pinepg_oem_name', $productDetail['oem_name']);
-                $item->setData('pinepg_oem_id', $productDetail['oem_id']);
-                
-                // Adjust row totals
-                $rowTotal = ($item->getPrice() * $item->getQtyOrdered()) - $totalItemDiscount;
-                $item->setRowTotal($rowTotal)
-                     ->setBaseRowTotal($rowTotal);
-                
-                $totalGatewayDiscount += $totalItemDiscount;
-                
-                $orderItemRepository->save($item);
-                
-                $this->logger->info(sprintf(
-                    'Applied discounts to SKU %s: Product ₹%s + Cashback ₹%s = Total ₹%s',
-                    $item->getSku(),
-                    number_format($productDiscount, 2),
-                    number_format($cashbackDiscount, 2),
-                    number_format($totalItemDiscount, 2)
-                ));
+    try {
+        $txnJson = base64_decode($txnAdditionalInfo);
+        $txnData = json_decode($txnJson, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new \Exception('Invalid JSON in txnAdditionalInfo');
+        }
+
+        $this->logger->info("Decoded txnData: " . json_encode($txnData));
+
+        if (!isset($txnData['product_details']) || !is_array($txnData['product_details'])) {
+            $this->logger->warning('No product_details found in txnAdditionalInfo');
+            return;
+        }
+
+        $objectManager = \Magento\Framework\App\ObjectManager::getInstance();
+        $orderItemRepository = $objectManager->get(\Magento\Sales\Api\OrderItemRepositoryInterface::class);
+
+        $totalMagentoDiscount = abs($order->getDiscountAmount());
+        $totalPinelabsDiscount = 0.0;
+        $magentoDiscountApplied = false;
+
+        foreach ($order->getAllVisibleItems() as $item) {
+            foreach ($txnData['product_details'] as $productDetail) {
+                if ($item->getSku() == $productDetail['product_code']) {
+                    $pinelabsProductDiscount = $productDetail['product_discount'] / 100;
+                    $pinelabsCashbackDiscount = $productDetail['subvention_cashback_discount'] / 100;
+                    $pinelabsTotal = $pinelabsProductDiscount + $pinelabsCashbackDiscount;
+
+                    $magentoItemDiscount = 0.0;
+                    if (!$magentoDiscountApplied && $totalMagentoDiscount > 0) {
+                        $magentoItemDiscount = $totalMagentoDiscount;
+                        $magentoDiscountApplied = true;
+                    }
+
+                    $combinedItemDiscount = $magentoItemDiscount + $pinelabsTotal;
+                    $qty = $item->getQtyOrdered();
+                    $itemPrice = $item->getPrice();
+
+                    // Final price after total discount
+                    $finalItemPrice = $itemPrice - ($combinedItemDiscount / $qty);
+                    $finalRowTotal = ($itemPrice * $qty) - $combinedItemDiscount;
+
+                    // Apply all calculated values to item
+                    $item->setDiscountAmount(-$combinedItemDiscount)
+                         ->setBaseDiscountAmount(-$combinedItemDiscount)
+                         ->setRowTotal($finalRowTotal)
+                         ->setBaseRowTotal($finalRowTotal)
+                         ->setPrice($finalItemPrice)
+                         ->setBasePrice($finalItemPrice);
+
+                    // Save Pinelabs metadata
+                    $item->setData('pinepg_product_amount', $productDetail['product_amount'] / 100);
+                    $item->setData('pinepg_cashback_discount', $pinelabsCashbackDiscount);
+                    $item->setData('pinepg_product_discount', $pinelabsProductDiscount);
+                    $item->setData('pinepg_cashback_discount_percentage', $productDetail['subvention_cashback_discount_percentage']);
+                    $item->setData('pinepg_oem_name', $productDetail['oem_name']);
+                    $item->setData('pinepg_oem_id', $productDetail['oem_id']);
+
+                    $orderItemRepository->save($item);
+
+                    $totalPinelabsDiscount += $pinelabsTotal;
+
+                    $this->logger->info(sprintf(
+                        'Applied combined discounts to SKU %s: Magento ₹%.2f + Pinelabs ₹%.2f = Total ₹%.2f | Final Item Price ₹%.2f | Final Row Total ₹%.2f',
+                        $item->getSku(),
+                        $magentoItemDiscount,
+                        $pinelabsTotal,
+                        $combinedItemDiscount,
+                        $finalItemPrice,
+                        $finalRowTotal
+                    ));
+                }
             }
         }
-    }
-    
-    // Update order totals
-    if ($totalGatewayDiscount > 0) {
-        $order->setDiscountAmount($totalGatewayDiscount)
-              ->setBaseDiscountAmount($totalGatewayDiscount)
-              ->setSubtotalWithDiscount($order->getSubtotal() - $totalGatewayDiscount)
-              ->setBaseSubtotalWithDiscount($order->getBaseSubtotal() - $totalGatewayDiscount)
-              ->setDiscountDescription('Pinelabs Gateway Discount');
-        
-        // Recalculate totals to ensure consistency
-        $order->setGrandTotal($order->getSubtotal() + $order->getTaxAmount() + $order->getShippingAmount() - $totalGatewayDiscount)
-              ->setBaseGrandTotal($order->getBaseSubtotal() + $order->getBaseTaxAmount() + $order->getBaseShippingAmount() - $totalGatewayDiscount);
-        
-        $this->logger->info(sprintf(
-            'Order %s: Applied total gateway discount of ₹%s. New grand total: ₹%s',
-            $order->getIncrementId(),
-            number_format($totalGatewayDiscount, 2),
-            number_format($order->getGrandTotal(), 2)
-        ));
+
+        if ($totalPinelabsDiscount > 0) {
+            $newOrderDiscount = -($totalMagentoDiscount + $totalPinelabsDiscount);
+
+            $order->setDiscountAmount($newOrderDiscount)
+                  ->setBaseDiscountAmount($newOrderDiscount)
+                  ->setDiscountDescription('Magento Coupon + Pinelabs Gateway Discount');
+
+            $order->addCommentToStatusHistory(
+                __('Combined discounts applied - Magento: ₹%1 + Pinelabs: ₹%2',
+                   number_format($totalMagentoDiscount, 2),
+                   number_format($totalPinelabsDiscount, 2))
+            );
+
+            $this->logger->info(sprintf(
+                'Order %s: Combined discounts - Magento ₹%.2f + Pinelabs ₹%.2f = Total ₹%.2f',
+                $order->getIncrementId(),
+                $totalMagentoDiscount,
+                $totalPinelabsDiscount,
+                abs($newOrderDiscount)
+            ));
+
+            // Adjust order totals
+            $order->setSubtotal($order->getSubtotal() - $totalPinelabsDiscount)
+                  ->setBaseSubtotal($order->getBaseSubtotal() - $totalPinelabsDiscount)
+                  ->setGrandTotal($order->getGrandTotal() - $totalPinelabsDiscount)
+                  ->setBaseGrandTotal($order->getBaseGrandTotal() - $totalPinelabsDiscount);
+
+            $order->save();
+        }
+    } catch (\Exception $e) {
+        $this->logger->error('Failed to process Pinelabs discounts: ' . $e->getMessage());
+        throw $e;
     }
 }
+
+
+
+
 
 /**
  * Process captured amount and verify totals
