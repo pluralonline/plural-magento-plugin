@@ -203,58 +203,62 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
         $magentoDiscountApplied = false;
 
         foreach ($order->getAllVisibleItems() as $item) {
-            foreach ($txnData['product_details'] as $productDetail) {
-                if ($item->getSku() == $productDetail['product_code']) {
-                    $pinelabsProductDiscount = $productDetail['product_discount'] / 100;
-                    $pinelabsCashbackDiscount = $productDetail['subvention_cashback_discount'] / 100;
-                    $pinelabsTotal = $pinelabsProductDiscount + $pinelabsCashbackDiscount;
+    foreach ($txnData['product_details'] as $productDetail) {
+        if ($item->getSku() == $productDetail['product_code']) {
+            $pinelabsProductDiscount = $productDetail['product_discount'] / 100;
+            $pinelabsCashbackDiscount = $productDetail['subvention_cashback_discount'] / 100;
+            $pinelabsTotal = $pinelabsProductDiscount + $pinelabsCashbackDiscount;
 
-                    $magentoItemDiscount = 0.0;
-                    if (!$magentoDiscountApplied && $totalMagentoDiscount > 0) {
-                        $magentoItemDiscount = $totalMagentoDiscount;
-                        $magentoDiscountApplied = true;
-                    }
+            $magentoItemDiscount = 0.0;
 
-                    $combinedItemDiscount = $magentoItemDiscount + $pinelabsTotal;
-                    $qty = $item->getQtyOrdered();
-                    $itemPrice = $item->getPrice();
-
-                    // Final price after total discount
-                    $finalItemPrice = $itemPrice - ($combinedItemDiscount / $qty);
-                    $finalRowTotal = ($itemPrice * $qty) - $combinedItemDiscount;
-
-                    // Apply all calculated values to item
-                    $item->setDiscountAmount(-$combinedItemDiscount)
-                         ->setBaseDiscountAmount(-$combinedItemDiscount)
-                         ->setRowTotal($finalRowTotal)
-                         ->setBaseRowTotal($finalRowTotal)
-                         ->setPrice($finalItemPrice)
-                         ->setBasePrice($finalItemPrice);
-
-                    // Save Pinelabs metadata
-                    $item->setData('pinepg_product_amount', $productDetail['product_amount'] / 100);
-                    $item->setData('pinepg_cashback_discount', $pinelabsCashbackDiscount);
-                    $item->setData('pinepg_product_discount', $pinelabsProductDiscount);
-                    $item->setData('pinepg_cashback_discount_percentage', $productDetail['subvention_cashback_discount_percentage']);
-                    $item->setData('pinepg_oem_name', $productDetail['oem_name']);
-                    $item->setData('pinepg_oem_id', $productDetail['oem_id']);
-
-                    $orderItemRepository->save($item);
-
-                    $totalPinelabsDiscount += $pinelabsTotal;
-
-                    $this->logger->info(sprintf(
-                        'Applied combined discounts to SKU %s: Magento ₹%.2f + Pinelabs ₹%.2f = Total ₹%.2f | Final Item Price ₹%.2f | Final Row Total ₹%.2f',
-                        $item->getSku(),
-                        $magentoItemDiscount,
-                        $pinelabsTotal,
-                        $combinedItemDiscount,
-                        $finalItemPrice,
-                        $finalRowTotal
-                    ));
-                }
+            // Only apply Magento discount to the first eligible item
+            if (!$magentoDiscountApplied && $totalMagentoDiscount > 0 && $pinelabsTotal > 0) {
+                $magentoItemDiscount = $totalMagentoDiscount;
+                $magentoDiscountApplied = true;
             }
+
+            $combinedItemDiscount = $magentoItemDiscount + $pinelabsTotal;
+            $qty = $item->getQtyOrdered();
+            $itemPrice = $item->getPrice();
+
+            if ($qty <= 0) {
+                $this->logger->warning("Invalid quantity for SKU {$item->getSku()}. Skipping discount application.");
+                continue;
+            }
+
+            $finalItemPrice = max(0, $itemPrice - ($combinedItemDiscount / $qty));
+            $finalRowTotal = max(0, ($itemPrice * $qty) - $combinedItemDiscount);
+
+            $item->setDiscountAmount(-$combinedItemDiscount)
+                ->setBaseDiscountAmount(-$combinedItemDiscount)
+                ->setRowTotal($finalRowTotal)
+                ->setBaseRowTotal($finalRowTotal)
+                ->setPrice($finalItemPrice)
+                ->setBasePrice($finalItemPrice);
+
+            $item->setData('pinepg_product_amount', $productDetail['product_amount'] / 100);
+            $item->setData('pinepg_cashback_discount', $pinelabsCashbackDiscount);
+            $item->setData('pinepg_product_discount', $pinelabsProductDiscount);
+            $item->setData('pinepg_cashback_discount_percentage', $productDetail['subvention_cashback_discount_percentage']);
+            $item->setData('pinepg_oem_name', $productDetail['oem_name'] ?? '');
+            $item->setData('pinepg_oem_id', $productDetail['oem_id'] ?? 0);
+
+            $orderItemRepository->save($item);
+
+            $totalPinelabsDiscount += $pinelabsTotal;
+
+            $this->logger->info(sprintf(
+                'Applied combined discounts to SKU %s: Magento ₹%.2f + Pinelabs ₹%.2f = Total ₹%.2f | Final Item Price ₹%.2f | Final Row Total ₹%.2f',
+                $item->getSku(),
+                $magentoItemDiscount,
+                $pinelabsTotal,
+                $combinedItemDiscount,
+                $finalItemPrice,
+                $finalRowTotal
+            ));
         }
+    }
+}
 
         if ($totalPinelabsDiscount > 0) {
             $newOrderDiscount = -($totalMagentoDiscount + $totalPinelabsDiscount);
