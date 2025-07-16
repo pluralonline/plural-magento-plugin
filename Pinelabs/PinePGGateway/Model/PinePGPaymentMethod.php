@@ -184,6 +184,14 @@ class PinePGPaymentMethod extends \Magento\Payment\Model\Method\AbstractMethod
 			} 
 			
 			$quantity = intval(explode('.',$product->getQtyOrdered())[0]);
+
+			$price = floatval($product->getPrice());
+			$eachProductPrice = intval($price * 100);
+
+			// ✅ Skip if product price is zero
+			if ($eachProductPrice <= 0) {
+				continue;
+			}
 			for ($j = 0; $j < $quantity; $j++) {
 			$product_details = new \stdClass();
 

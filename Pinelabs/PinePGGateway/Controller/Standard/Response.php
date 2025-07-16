@@ -77,9 +77,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
 
 
-            if (isset($params['ppc_TxnAdditionalInfo'])) {
-                $this->processPinelabsDiscounts($order, $params['ppc_TxnAdditionalInfo']);
-            }
+            
             
 
             if(!$order->getCustomerIsGuest()) {
@@ -121,9 +119,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
                 $PayEnvironment = $this->pinePGPaymentMethod->getConfigData("PayEnvironment");
 
-                if (isset($params['ppc_CapturedAmount'])) {
-                    $this->processCapturedAmount($order, $params['ppc_CapturedAmount']);
-                }
+               
 
                 if (!PinePGVerify::verify($params,$PayEnvironment)) {
                     $this->_cancelPayment('Payment fails');
@@ -145,14 +141,13 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
                 $encryptedOrderId = $this->encryptor->encrypt($order->getId());
 
                 $urlEncodedOrderId = $this->urlEncoder->encode($encryptedOrderId);
+
+                if (isset($params['ppc_TxnAdditionalInfo'])) {
+                $this->processPinelabsDiscounts($order, $params['ppc_TxnAdditionalInfo']);
+            }
                
-                $successUrl = $this->_url->getUrl('checkout/onepage/success');
-                if (filter_var($successUrl, FILTER_VALIDATE_URL)) {
-                    $resultRedirect->setPath('checkout/onepage/success');
-                } else {
-                    $resultRedirect->setPath('/');
-                    $this->logger->error('Invalid success URL generated');
-                }
+                
+                 $resultRedirect->setPath('checkout/onepage/success');
 
                 try {
                     $orderSender = $objectManager->create('Magento\Sales\Model\Order\Email\Sender\OrderSender');
@@ -202,93 +197,116 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
         $totalPinelabsDiscount = 0.0;
         $magentoDiscountApplied = false;
 
+        // First pass - calculate total discounts
         foreach ($order->getAllVisibleItems() as $item) {
-    foreach ($txnData['product_details'] as $productDetail) {
-        if ($item->getSku() == $productDetail['product_code']) {
-            $pinelabsProductDiscount = $productDetail['product_discount'] / 100;
-            $pinelabsCashbackDiscount = $productDetail['subvention_cashback_discount'] / 100;
-            $pinelabsTotal = $pinelabsProductDiscount + $pinelabsCashbackDiscount;
-
-            $magentoItemDiscount = 0.0;
-
-            // Only apply Magento discount to the first eligible item
-            if (!$magentoDiscountApplied && $totalMagentoDiscount > 0 && $pinelabsTotal > 0) {
-                $magentoItemDiscount = $totalMagentoDiscount;
-                $magentoDiscountApplied = true;
+            foreach ($txnData['product_details'] as $productDetail) {
+                if ($item->getSku() == $productDetail['product_code']) {
+                    $pinelabsProductDiscount = $productDetail['product_discount'] / 100;
+                    $pinelabsCashbackDiscount = $productDetail['subvention_cashback_discount'] / 100;
+                    $totalPinelabsDiscount += $pinelabsProductDiscount + $pinelabsCashbackDiscount;
+                }
             }
-
-            $combinedItemDiscount = $magentoItemDiscount + $pinelabsTotal;
-            $qty = $item->getQtyOrdered();
-            $itemPrice = $item->getPrice();
-
-            if ($qty <= 0) {
-                $this->logger->warning("Invalid quantity for SKU {$item->getSku()}. Skipping discount application.");
-                continue;
-            }
-
-            $finalItemPrice = max(0, $itemPrice - ($combinedItemDiscount / $qty));
-            $finalRowTotal = max(0, ($itemPrice * $qty) - $combinedItemDiscount);
-
-            $item->setDiscountAmount(-$combinedItemDiscount)
-                ->setBaseDiscountAmount(-$combinedItemDiscount)
-                ->setRowTotal($finalRowTotal)
-                ->setBaseRowTotal($finalRowTotal)
-                ->setPrice($finalItemPrice)
-                ->setBasePrice($finalItemPrice);
-
-            $item->setData('pinepg_product_amount', $productDetail['product_amount'] / 100);
-            $item->setData('pinepg_cashback_discount', $pinelabsCashbackDiscount);
-            $item->setData('pinepg_product_discount', $pinelabsProductDiscount);
-            $item->setData('pinepg_cashback_discount_percentage', $productDetail['subvention_cashback_discount_percentage']);
-            $item->setData('pinepg_oem_name', $productDetail['oem_name'] ?? '');
-            $item->setData('pinepg_oem_id', $productDetail['oem_id'] ?? 0);
-
-            $orderItemRepository->save($item);
-
-            $totalPinelabsDiscount += $pinelabsTotal;
-
-            $this->logger->info(sprintf(
-                'Applied combined discounts to SKU %s: Magento ₹%.2f + Pinelabs ₹%.2f = Total ₹%.2f | Final Item Price ₹%.2f | Final Row Total ₹%.2f',
-                $item->getSku(),
-                $magentoItemDiscount,
-                $pinelabsTotal,
-                $combinedItemDiscount,
-                $finalItemPrice,
-                $finalRowTotal
-            ));
         }
-    }
-}
 
-        if ($totalPinelabsDiscount > 0) {
-            $newOrderDiscount = -($totalMagentoDiscount + $totalPinelabsDiscount);
+        $newOrderDiscount = $totalMagentoDiscount + $totalPinelabsDiscount;
+        $newGrandTotal = $order->getSubtotal() + $order->getShippingAmount() - $newOrderDiscount;
 
-            $order->setDiscountAmount($newOrderDiscount)
-                  ->setBaseDiscountAmount($newOrderDiscount)
-                  ->setDiscountDescription('Magento Coupon + Pinelabs Gateway Discount');
+        // Second pass - apply discounts to items
+        foreach ($order->getAllVisibleItems() as $item) {
+            foreach ($txnData['product_details'] as $productDetail) {
+                if ($item->getSku() == $productDetail['product_code']) {
+                    $pinelabsProductDiscount = $productDetail['product_discount'] / 100;
+                    $pinelabsCashbackDiscount = $productDetail['subvention_cashback_discount'] / 100;
+                    $pinelabsTotal = $pinelabsProductDiscount + $pinelabsCashbackDiscount;
 
-            $order->addCommentToStatusHistory(
-                __('Combined discounts applied - Magento: ₹%1 + Pinelabs: ₹%2',
-                   number_format($totalMagentoDiscount, 2),
-                   number_format($totalPinelabsDiscount, 2))
+                    $magentoItemDiscount = 0.0;
+                    if (!$magentoDiscountApplied && $totalMagentoDiscount > 0) {
+                        $magentoItemDiscount = $totalMagentoDiscount;
+                        $magentoDiscountApplied = true;
+                    }
+
+                    $combinedItemDiscount = $magentoItemDiscount + $pinelabsTotal;
+                    $qty = $item->getQtyOrdered();
+                    $itemPrice = $item->getPrice();
+
+                    $finalItemPrice = max(0, $itemPrice - ($combinedItemDiscount / $qty));
+                    $finalRowTotal = max(0, ($itemPrice * $qty) - $combinedItemDiscount);
+
+                    $item->setDiscountAmount($combinedItemDiscount)
+                        ->setBaseDiscountAmount($combinedItemDiscount)
+                        ->setRowTotal($finalRowTotal)
+                        ->setBaseRowTotal($finalRowTotal)
+                        ->setPrice($finalItemPrice)
+                        ->setBasePrice($finalItemPrice);
+
+                    // Set additional PinePG data
+                    $item->setData('pinepg_product_amount', $productDetail['product_amount'] / 100)
+                        ->setData('pinepg_cashback_discount', $pinelabsCashbackDiscount)
+                        ->setData('pinepg_product_discount', $pinelabsProductDiscount)
+                        ->setData('pinepg_cashback_discount_percentage', $productDetail['subvention_cashback_discount_percentage'])
+                        ->setData('pinepg_oem_name', $productDetail['oem_name'] ?? '')
+                        ->setData('pinepg_oem_id', $productDetail['oem_id'] ?? 0);
+
+                    $orderItemRepository->save($item);
+                }
+            }
+        }
+
+        // Update order totals
+        $order->setDiscountAmount(-$newOrderDiscount)
+              ->setBaseDiscountAmount(-$newOrderDiscount)
+              ->setGrandTotal($newGrandTotal)
+              ->setBaseGrandTotal($newGrandTotal)
+              ->setTotalPaid($newGrandTotal)  // This is critical
+              ->setBaseTotalPaid($newGrandTotal)  // This is critical
+              ->setTotalDue(0)
+              ->setBaseTotalDue(0)
+              ->setDiscountDescription('Magento Coupon + Pinelabs Gateway Discount');
+
+        // Force update payment information
+        $payment = $order->getPayment();
+        if ($payment) {
+            $payment->setAmountPaid($newGrandTotal)
+                    ->setBaseAmountPaid($newGrandTotal)
+                    ->setAmountAuthorized($newGrandTotal)
+                    ->setBaseAmountAuthorized($newGrandTotal)
+                    ->setAmountOrdered($newGrandTotal)  // Important addition
+                    ->setBaseAmountOrdered($newGrandTotal)  // Important addition
+                    ->setShippingAmount(0)
+                    ->setBaseShippingAmount(0)
+                    ->setIsTransactionClosed(true);
+
+            // Add transaction with correct amount
+            $payment->addTransaction(
+                \Magento\Sales\Model\Order\Payment\Transaction::TYPE_CAPTURE,
+                null,
+                true,
+                ['amount' => $newGrandTotal]
             );
-
-            $this->logger->info(sprintf(
-                'Order %s: Combined discounts - Magento ₹%.2f + Pinelabs ₹%.2f = Total ₹%.2f',
-                $order->getIncrementId(),
-                $totalMagentoDiscount,
-                $totalPinelabsDiscount,
-                abs($newOrderDiscount)
-            ));
-
-            // Adjust order totals
-            $order->setSubtotal($order->getSubtotal() - $totalPinelabsDiscount)
-                  ->setBaseSubtotal($order->getBaseSubtotal() - $totalPinelabsDiscount)
-                  ->setGrandTotal($order->getGrandTotal() - $totalPinelabsDiscount)
-                  ->setBaseGrandTotal($order->getBaseGrandTotal() - $totalPinelabsDiscount);
-
-            $order->save();
+            
+            $payment->save();
         }
+
+        // Add status history
+        $order->addCommentToStatusHistory(
+            __('Applied discounts - Magento: ₹%1, Pinelabs: ₹%2. Final amount: ₹%3',
+               number_format($totalMagentoDiscount, 2),
+               number_format($totalPinelabsDiscount, 2),
+               number_format($newGrandTotal, 2))
+        );
+
+        $this->logger->info(sprintf(
+            'Order %s: Final totals - Subtotal: ₹%.2f, Discount: ₹%.2f, Grand Total: ₹%.2f, Paid: ₹%.2f',
+            $order->getIncrementId(),
+            $order->getSubtotal(),
+            $newOrderDiscount,
+            $newGrandTotal,
+            $newGrandTotal
+        ));
+
+        // Final save with all changes
+        $order->save();
+
     } catch (\Exception $e) {
         $this->logger->error('Failed to process Pinelabs discounts: ' . $e->getMessage());
         throw $e;
@@ -299,52 +317,8 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
 
 
-/**
- * Process captured amount and verify totals
- */
-protected function processCapturedAmount($order, $capturedAmount)
-{
-    $capturedAmount = $capturedAmount / 100;
-    $grandTotal = $order->getGrandTotal();
-    
-    // Store original captured amount in custom field
-    $order->setData('pinepg_captured_amount', $capturedAmount);
-    
-    // Verify amount matches (allow small rounding differences)
-    if (abs($capturedAmount - $grandTotal) > 0.01) {
-        $this->logger->warning(sprintf(
-            'Amount mismatch! Pinelabs captured ₹%s but order total is ₹%s',
-            number_format($capturedAmount, 2),
-            number_format($grandTotal, 2)
-        ));
-    }
-    
-    // Mark as fully paid
-    $order->setTotalPaid($grandTotal)
-          ->setBaseTotalPaid($grandTotal)
-          ->setState(\Magento\Sales\Model\Order::STATE_PROCESSING)
-          ->setStatus($order->getConfig()->getStateDefaultStatus(\Magento\Sales\Model\Order::STATE_PROCESSING));
-    
-    // Add payment transaction
-    $payment = $order->getPayment();
-    $payment->setAmountPaid($grandTotal)
-            ->setBaseAmountPaid($grandTotal)
-            ->setIsTransactionClosed(true);
-    
-    $payment->addTransaction(
-        \Magento\Sales\Model\Order\Payment\Transaction::TYPE_CAPTURE,
-        null,
-        true
-    );
-    
-    // Add order comment
-    $order->addCommentToStatusHistory(
-        sprintf('Pinelabs payment captured: ₹%s. Discount applied: ₹%s',
-            number_format($capturedAmount, 2),
-            number_format($order->getDiscountAmount(), 2)
-        ),
-        false
-    )->setIsCustomerNotified(true);
-}
+
+     
+
 
 }
