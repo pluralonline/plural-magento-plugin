@@ -101,157 +101,170 @@ class PinePGPaymentMethod extends \Magento\Payment\Model\Method\AbstractMethod
             return $string;
         }
 		
-    public function buildCheckoutRequest() {
+   public function buildCheckoutRequest() {
+    $writer = new \Zend_Log_Writer_Stream(BP . '/var/log/PinePG/'.date("Y-m-d").'.log');
+    $this->logger = new \Zend_Log();
+    $this->logger->addWriter($writer);
 
-		$writer = new \Zend_Log_Writer_Stream(BP . '/var/log/PinePG/'.date("Y-m-d").'.log');
-        $this->logger = new \Zend_Log();
-        $this->logger->addWriter($writer);
+    $order = $this->checkoutSession->getLastRealOrder();
+    
+    $this->logger->info("===== STARTING PINE PG REQUEST BUILD =====");
+    $this->logger->info("Order ID: ".$order->getIncrementId());
+    
+    // Convert amounts to paisa (×100)
+    $grandTotal = round($order->getBaseGrandTotal(), 2) * 100;
+    $discountAmount = abs($order->getBaseDiscountAmount()) * 100;
+    $shippingAmount = $order->getBaseShippingAmount() * 100;
+    $taxAmount = $order->getBaseTaxAmount() * 100;
 
-		$TXN_TYPE_PURCHASE='1';
-		$NAVIGATION_REDIRECT_MODE='2';
-		$this->logger->info(__LINE__ . ' | '.__FUNCTION__);
-		
-        $order = $this->checkoutSession->getLastRealOrder();
-        $billing_address = $order->getBillingAddress();
-		$shipping_address = $order->getShippingAddress();
-		        
-		$params = array();
-		//set billing address
-		$params['ppc_CustomerFirstName'] 	= $billing_address->getData('firstname');
-		$params['ppc_CustomerLastName'] 	= $billing_address->getData('lastname');
-		$params['ppc_CustomerCountry'] 		= $billing_address->getData('country_id');
-		$countryObj 						= $this->_countryHelper->loadByCode($params['ppc_CustomerCountry']);
-		$params['ppc_CustomerCountry'] 		= $countryObj->getName();
-		$params['ppc_CustomerState'] 		= $billing_address->getData('region');
-		$params['ppc_CustomerCity'] 		= $billing_address->getData('city');
-		
-		$params['ppc_CustomerAddressPIN'] 	= $billing_address->getData('postcode');
-		$params['ppc_CustomerEmail'] 		= $billing_address->getData('email');
-		$params['ppc_CustomerMobile'] 		= $billing_address->getData('telephone');
+    $this->logger->info("Base Amounts:");
+    $this->logger->info(sprintf("Grand Total: %.2f (%d paisa)", $grandTotal/100, $grandTotal));
+    $this->logger->info(sprintf("Discount: %.2f (%d paisa)", $discountAmount/100, $discountAmount));
+    $this->logger->info(sprintf("Shipping: %.2f (%d paisa)", $shippingAmount/100, $shippingAmount));
+    $this->logger->info(sprintf("Tax: %.2f (%d paisa)", $taxAmount/100, $taxAmount));
 
-		//set shipping address
-		$params['ppc_ShippingFirstName'] 	 = $shipping_address->getData('firstname');
-		$params['ppc_ShippingLastName'] 	 = $shipping_address->getData('lastname');
-		
-		$params['ppc_ShippingCity'] 		 = $shipping_address->getData('city');
-		$params['ppc_ShippingState'] 		 = $shipping_address->getData('region');
-		
-		$params['ppc_ShippingCountry'] 	 	 = $shipping_address->getData('country_id');
-		$countryObj 						 = $this->_countryHelper->loadByCode($params['ppc_ShippingCountry']);
-		$params['ppc_ShippingCountry'] 		 = $countryObj->getName();
-		
-		$params['ppc_ShippingZipCode'] 	 	 = $shipping_address->getData('postcode');
-		$params['ppc_ShippingPhoneNumer']  	 = $shipping_address->getData('telephone');
+    // Initialize arrays
+    $productInfo = [];
+    $productDetails = [];
+    $totalProductAmount = 0;
+    $totalDiscountedAmount = 0;
 
-		$params['ppc_UdfField1'] 			 = 'Magento_2.3.4';
-        $params["ppc_MerchantAccessCode"] 	 = $this->getConfigData("MerchantAccessCode");
-        $secret_key 						 = $this->Hex2String($this->getConfigData("MerchantSecretKey"));
-        $params["ppc_PayModeOnLandingPage"]  = $this->getConfigData("MerchantPaymentMode");
-        $params["ppc_Carttype"] 			 = $this->getConfigData("cart");
-        $params["ppc_LPC_SEQ"] 				 = '1';
-		$params["ppc_Amount"] 				 = round($order->getBaseGrandTotal(), 2)*100;
-        $params["ppc_NavigationMode"] 		 = $NAVIGATION_REDIRECT_MODE;
-		$params["ppc_MerchantReturnURL"] 	 = $this->getReturnUrl();
-        $params["ppc_TransactionType"] 		 = $TXN_TYPE_PURCHASE;
-	    $params["ppc_UniqueMerchantTxnID"] 	 = uniqid().'_'.$this->checkoutSession->getLastRealOrderId(); 
-	    $params["ppc_MerchantID"] 			 = $this->getConfigData("MerchantId");
+    $this->logger->info("===== PRODUCT DETAILS =====");
+    
+    // First pass: Calculate total product amount and collect discount information
+    $items = $order->getAllVisibleItems();
+    $totalItems = count($items);
+    $hasProductLevelDiscount = false;
+    
+    foreach ($items as $item) {
+        $itemDiscount = abs($item->getDiscountAmount()) * 100;
+        if ($itemDiscount > 0) {
+            $hasProductLevelDiscount = true;
+            break;
+        }
+    }
 
-	    $product_id ='';
-	    $totalOrders = 0;
-	    $IsProductQuantityInCartMoreThanOne=false;
-		$quan=-1;
-		 
-		$params['ppc_MerchantProductInfo'] = '';
-		$params['ppc_Product_Code']  ='';
-		$product_info_data = [];
-		$i = 0;
-		$totalProductPrice=0;
-		foreach ($order->getAllVisibleItems()  as $product) {
-			$this->logger->info(__LINE__ . ' | '.__FUNCTION__.' Get Product code of item and check whether there is more than one item present in cart or not');
-			$totalOrders =$totalOrders+1;
-			$product_id = $product->getSku();
-			$quan=$product->getQty();
-					   
-			if($totalOrders == 1){
-			    $params['ppc_MerchantProductInfo'] = $product->getName();
-			}else{
-				$params['ppc_MerchantProductInfo'] = $params['ppc_MerchantProductInfo'].'|'.$product->getName();
-			}
-						   
-			if($product->getQtyOrdered()>1)
-			{
-				$IsProductQuantityInCartMoreThanOne=true; 
-			} 
-			
-			$quantity = intval(explode('.',$product->getQtyOrdered())[0]);
+    foreach ($items as $item) {
+        $price = round($item->getPrice(), 2) * 100;
+        $qty = (int)$item->getQtyOrdered();
+        $itemTotal = $price * $qty;
+        $itemDiscount = abs($item->getDiscountAmount()) * 100;
+        
+        // For cart-level discount, distribute discount equally among items
+        if (!$hasProductLevelDiscount && $discountAmount > 0) {
+            $itemDiscount = round($discountAmount / $totalItems, 0);
+        }
+        
+        $discountedItemTotal = $itemTotal - $itemDiscount;
+        $discountedPricePerItem = round($discountedItemTotal / $qty, 0);
+        
+        $this->logger->info(sprintf(
+            "Product: %s | SKU: %s | Price: %.2f | Qty: %d | Item Total: %.2f | Discount: %.2f | Discounted Total: %.2f",
+            $item->getName(),
+            $item->getSku(),
+            $price/100,
+            $qty,
+            $itemTotal/100,
+            $itemDiscount/100,
+            $discountedItemTotal/100
+        ));
 
-			$price = floatval($product->getPrice());
-			$eachProductPrice = intval($price * 100);
+        // Add product name (once per SKU)
+        $productInfo[] = $item->getName();
+
+		   $price = floatval($item->getPrice());
 
 			// ✅ Skip if product price is zero
-			if ($eachProductPrice <= 0) {
+			if ($price <= 0) {
 				continue;
 			}
-			for ($j = 0; $j < $quantity; $j++) {
-			$product_details = new \stdClass();
-
-			$eachProductPrice=intval(floatval($product->getPrice()) * 100);
-			$totalProductPrice=$totalProductPrice+$eachProductPrice;
-			$product_details->product_code = $product->getSku();
-			$product_details->product_amount = intval(floatval($product->getPrice()) * 100);
-			$product_info_data[$i] = $product_details;
-			$i++;
-			}
-			
-			$this->logger->info('quantity:'.$product->getDiscountAmount().'-discounts'.$quantity );	
-			
-        }
-
-//special handling for shipping and discount to show emi
-		$ppcAmount = $params["ppc_Amount"]; 
-		if($ppcAmount>$totalProductPrice){
-		$diffAmount = $ppcAmount - $totalProductPrice;
-		$product_info_data[0]->product_amount += $diffAmount;
-		}elseif($ppcAmount<$totalProductPrice){
-		$diffAmount = $totalProductPrice - $ppcAmount;
-		$firstProductPrice = $product_info_data[0]->product_amount;
-		if ($firstProductPrice >= $diffAmount) {
-			$product_info_data[0]->product_amount -= $diffAmount;
-		} 
-		}
-//special handling for shipping and discount to show emi
 		
-		$this->logger->info('price:'.$product->getPrice() );	
-		$params = $this->checkCartType($product_info_data,$params,$order);
-
-        if ($totalOrders == 1 && $IsProductQuantityInCartMoreThanOne==false )
-        {
-		    $this->logger->info(__LINE__ . ' | '.__FUNCTION__.' Item count is one and Product code is:'.$product_id );
-            $params['ppc_Product_Code']  = $product_id;
-		}
-        else
-        {
-			$this->logger->info(__LINE__ . ' | '.__FUNCTION__.' Item count is more than one ' );
-			$params['ppc_Product_Code']  ='';
+        
+        // Add one line per quantity with discounted price
+        for ($i = 0; $i < $qty; $i++) {
+            $productDetails[] = [
+                'product_code' => $item->getSku(),
+                'product_amount' => $discountedPricePerItem
+            ];
+            $totalProductAmount += $discountedPricePerItem;
+            $totalDiscountedAmount += ($price - $discountedPricePerItem);
         }
-					
-	  	ksort($params);
-		$strString="";
-	 
-		 // convert dictionary key and value to a single string variable
-		foreach ($params as $key => $val) {
-			$strString.=$key."=".$val."&";
-		}
-	    $this->logger->info(__LINE__ . ' | '.__FUNCTION__.' Request paramter is: '.$strString );
-		 // trim last character from string
-		$strString = substr($strString, 0, -1);
-		$code = strtoupper(hash_hmac('sha256', $strString, $secret_key));
-        $this->logger->info(__LINE__ . ' | '.__FUNCTION__.' Hash of request is '.$code );
-        $params['ppc_DIA_SECRET_TYPE'] = 'SHA256';
-	    $params['ppc_DIA_SECRET'] = $code;	
-		$this->logger->info(__LINE__ . ' | '.__FUNCTION__.' Parameters: '. json_encode($params));
-        return $params;
     }
+
+    // Add shipping as separate line item if needed
+    if ($shippingAmount > 0) {
+        $this->logger->info(sprintf("Adding Shipping: %.2f", $shippingAmount/100));
+        $productDetails[] = [
+            'product_code' => 'SHIPPING',
+            'product_amount' => $shippingAmount
+        ];
+    }
+
+    $this->logger->info("===== AMOUNT CALCULATION =====");
+    $this->logger->info(sprintf("Total Products: %.2f", $totalProductAmount/100));
+    $this->logger->info(sprintf("+ Shipping: %.2f", $shippingAmount/100));
+    $this->logger->info(sprintf("- Total Discount Applied: %.2f", $totalDiscountedAmount/100));
+    $calculatedTotal = $totalProductAmount + $shippingAmount;
+    $this->logger->info(sprintf("= Calculated Total: %.2f", $calculatedTotal/100));
+    $this->logger->info(sprintf("Order Grand Total: %.2f", $grandTotal/100));
+
+    if (abs($grandTotal - $calculatedTotal) > 1) {
+        $this->logger->err(sprintf(
+            "AMOUNT MISMATCH: Difference of %.2f detected!", 
+            abs($grandTotal - $calculatedTotal)/100
+        ));
+    }
+
+    // Build request parameters
+    $params = [
+        // Payment amounts
+        "ppc_Amount" => $grandTotal,
+        "ppc_CouponDiscountAmount" => $discountAmount,
+        
+        // Merchant info
+        "ppc_MerchantID" => $this->getConfigData("MerchantId"),
+        "ppc_MerchantAccessCode" => $this->getConfigData("MerchantAccessCode"),
+        
+        // Product info
+        "ppc_MerchantProductInfo" => implode('|', array_unique($productInfo)),
+        "ppc_MultiCartProductDetails" => base64_encode(json_encode($productDetails)),
+        
+        // Other required fields
+        "ppc_UniqueMerchantTxnID" => uniqid().'_'.$order->getIncrementId(),
+        "ppc_MerchantReturnURL" => $this->getReturnUrl(),
+        "ppc_NavigationMode" => '2',
+        "ppc_PayModeOnLandingPage" => $this->getConfigData("MerchantPaymentMode"),
+        "ppc_TransactionType" => '1',
+    ];
+
+    // Add customer data
+    $billing = $order->getBillingAddress();
+    $params += [
+        'ppc_CustomerFirstName' => $billing->getFirstname(),
+        'ppc_CustomerLastName' => $billing->getLastname(),
+        'ppc_CustomerMobile' => $billing->getTelephone(),
+        'ppc_CustomerEmail' => $billing->getEmail()
+    ];
+
+    ksort($params);
+    $pairs = [];
+    foreach ($params as $key => $value) {
+        $pairs[] = "$key=$value";
+    }
+    $stringToHash = implode('&', $pairs);
+
+    $secretKey = $this->Hex2String($this->getConfigData("MerchantSecretKey"));
+    $params['ppc_DIA_SECRET_TYPE'] = 'SHA256';
+    $params['ppc_DIA_SECRET'] = strtoupper(hash_hmac('sha256', $stringToHash, $secretKey));
+
+    $this->logger->info("===== FINAL REQUEST PARAMS =====");
+    $this->logger->info(json_encode($params, JSON_PRETTY_PRINT));
+    $this->logger->info("String to Hash: ".$stringToHash);
+    $this->logger->info("Generated Hash: ".$params['ppc_DIA_SECRET']);
+    $this->logger->info("===== REQUEST BUILD COMPLETE =====");
+
+    return $params;
+}
 	 
 	  //validate response
     public function validateResponse($returnParams) {
@@ -435,35 +448,38 @@ class PinePGPaymentMethod extends \Magento\Payment\Model\Method\AbstractMethod
 		$this->logger->info(__LINE__ . ' | '.__FUNCTION__.' Save the order after successful response from Pine PG for order id:'.$response['ppc_UniqueMerchantTxnID'].'and Pine PG Txn ID:'.$response['ppc_PinePGTransactionID'] );
     }
 
-	private function checkCartType($product_info_data,$params,$order)
-	{
-
-		if($params['ppc_Carttype'] == 'MultiCart'){
-
-			if($product_info_data){ 
-
-				if($order->getDiscountAmount()){
-					$discount_val = abs($order->getDiscountAmount());
-					$discount_val =0;
-					$productTotalAmt_beforeDiscount = $params['ppc_Amount'] + ($discount_val*100);
-
-					$product_info_data = $this->calculation_on_items($product_info_data,$productTotalAmt_beforeDiscount,($discount_val*100));	
-				}
-
-				$ppc_MultiCartProductDetails = base64_encode(json_encode($product_info_data));
-			
-				$params['ppc_MultiCartProductDetails'] = base64_encode(json_encode($product_info_data));
-			}
-			else 
-			{
-				$params['ppc_MultiCartProductDetails'] = '';
-				unset($params['ppc_MultiCartProductDetails']);
-			}
-
-		}
-		unset($params['ppc_Carttype']);
-		return $params;		
-	}
+	private function checkCartType($product_info_data, $params, $order)
+{
+    if ($params['ppc_Carttype'] == 'MultiCart') {
+        if ($product_info_data) {
+            $discountAmount = $order->getDiscountAmount() ? (int)(abs(floatval($order->getDiscountAmount())) * 100) : 0;
+            $shippingAmount = $order->getShippingAmount() ? (int)(floatval($order->getShippingAmount()) * 100) : 0;
+            
+            if ($discountAmount > 0) {
+                $productTotalAmt_beforeDiscount = array_sum(array_map(function($item) {
+                    return $item->product_amount;
+                }, $product_info_data)) + $discountAmount;
+                
+                $product_info_data = $this->calculation_on_items($product_info_data, $productTotalAmt_beforeDiscount, $discountAmount);
+            }
+            
+            // Add shipping as separate item if needed
+            if ($shippingAmount > 0) {
+                $shippingProduct = new \stdClass();
+                $shippingProduct->product_code = 'SHIPPING';
+                $shippingProduct->product_amount = $shippingAmount;
+                $product_info_data[] = $shippingProduct;
+            }
+            
+            $params['ppc_MultiCartProductDetails'] = base64_encode(json_encode($product_info_data));
+        } else {
+            $params['ppc_MultiCartProductDetails'] = '';
+            unset($params['ppc_MultiCartProductDetails']);
+        }
+    }
+    unset($params['ppc_Carttype']);
+    return $params;
+}
 
 	private function calculation_on_items($items,$total_amt,$discount){ 
 
