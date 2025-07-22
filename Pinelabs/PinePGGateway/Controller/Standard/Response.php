@@ -171,7 +171,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
     }
 
 
-     protected function processPinelabsDiscounts($order, $txnAdditionalInfo)
+    protected function processPinelabsDiscounts($order, $txnAdditionalInfo)
 {
     $this->logger->info('Processing Pinelabs discounts');
 
@@ -205,10 +205,10 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
             $sku = $item->getSku();
             $qty = $item->getQtyOrdered();
-            $originalItemPrice = 45000; // Hardcoded original price as requested
-            $itemPrice = $item->getPrice(); // Current price (40000)
+            $originalPrice = $item->getOriginalPrice(); // Get the original price
+            $itemPrice = $item->getPrice(); // Current price
             $itemMagentoDiscount = abs($item->getDiscountAmount());
-            $originalRowTotal = $originalItemPrice * $qty; // 45000 * 1 = 45000
+            $originalRowTotal = $originalPrice * $qty;
 
             $itemPinelabsDiscount = 0.0;
 
@@ -231,26 +231,26 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
             }
 
             $combinedItemDiscount = $itemMagentoDiscount + $itemPinelabsDiscount;
-            $finalRowTotal = max(0, $itemPrice * $qty - $combinedItemDiscount); // 40000 - 5369.75 = 34630.25
+            $finalRowTotal = max(0, ($itemPrice * $qty) - $combinedItemDiscount);
 
             // Logging per item
             $this->logger->info(sprintf(
                 "Item: %s | SKU: %s | Qty: %d | Orig Price: ₹%.2f | Price: ₹%.2f | Magento Disc: ₹%.2f | PinePG Disc: ₹%.2f | Row Total: ₹%.2f",
-                $item->getName(), $sku, $qty, $originalItemPrice, $itemPrice, $itemMagentoDiscount, $itemPinelabsDiscount, $finalRowTotal
+                $item->getName(), $sku, $qty, $originalPrice, $itemPrice, $itemMagentoDiscount, $itemPinelabsDiscount, $finalRowTotal
             ));
 
-            // Set item values to show original price 45000 but maintain other values
-            $item->setPrice($itemPrice)
+            // Set item values to maintain original price but show correct calculations
+            $item->setOriginalPrice($originalPrice)
+                 ->setBaseOriginalPrice($originalPrice)
+                 ->setPrice($itemPrice)
                  ->setBasePrice($itemPrice)
-                 ->setOriginalPrice($originalItemPrice) // Set to 45000 as requested
-                 ->setBaseOriginalPrice($originalItemPrice)
-                 ->setRowTotal($itemPrice * $qty) // Show current subtotal (40000)
+                 ->setRowTotal($itemPrice * $qty) // Current price * qty
                  ->setBaseRowTotal($itemPrice * $qty)
-                 ->setOriginalRowTotal($originalRowTotal) // 45000
+                 ->setOriginalRowTotal($originalRowTotal)
                  ->setBaseOriginalRowTotal($originalRowTotal)
-                 ->setDiscountAmount($combinedItemDiscount) // Show total discount (5369.75)
+                 ->setDiscountAmount($combinedItemDiscount)
                  ->setBaseDiscountAmount($combinedItemDiscount)
-                 ->setRowTotalInclTax($finalRowTotal) // This will show as "Row Total" (34630.25)
+                 ->setRowTotalInclTax($finalRowTotal)
                  ->setBaseRowTotalInclTax($finalRowTotal);
 
             $orderItemRepository->save($item);
@@ -260,7 +260,6 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
             $newGrandTotal += $finalRowTotal;
         }
 
-        // [Rest of the function remains exactly the same as previous version]
         // Add shipping if present
         $shipping = $order->getShippingAmount();
         $newGrandTotal += $shipping;
@@ -270,7 +269,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
         // Update order totals
         $order->setDiscountAmount(-$totalDiscount)
               ->setBaseDiscountAmount(-$totalDiscount)
-              ->setSubtotal($order->getSubtotal()) // Maintain original subtotal
+              ->setSubtotal($order->getSubtotal())
               ->setBaseSubtotal($order->getBaseSubtotal())
               ->setGrandTotal($newGrandTotal)
               ->setBaseGrandTotal($newGrandTotal)
