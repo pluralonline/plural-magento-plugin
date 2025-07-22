@@ -171,7 +171,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
     }
 
 
- protected function processPinelabsDiscounts($order, $txnAdditionalInfo)
+    protected function processPinelabsDiscounts($order, $txnAdditionalInfo)
 {
     $this->logger->info('Processing Pinelabs discounts');
 
@@ -199,13 +199,15 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
         foreach ($order->getAllVisibleItems() as $item) {
             if ($item->getPrice() <= 0) {
-                continue; // skip zero-priced items
+                $this->logger->info("Skipping item with zero price: " . $item->getSku());
+                continue;
             }
 
             $sku = $item->getSku();
             $qty = $item->getQtyOrdered();
-            $itemPrice = $item->getOriginalPrice(); // use original price
-            $itemMagentoDiscount = abs($item->getDiscountAmount()); // use actual Magento discount per item
+            $itemPrice = $item->getPrice(); // Original price (40000)
+            $itemMagentoDiscount = abs($item->getDiscountAmount());
+            $originalRowTotal = $itemPrice * $qty; // 40000 * 1 = 40000
 
             $itemPinelabsDiscount = 0.0;
 
@@ -216,7 +218,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
 
                     $itemPinelabsDiscount = ($pinelabsProductDiscount + $pinelabsCashbackDiscount) * $qty;
 
-                    // Store data
+                    // Store extra data
                     $item->setData('pinepg_product_amount', $productDetail['product_amount'] / 100)
                          ->setData('pinepg_cashback_discount', $pinelabsCashbackDiscount)
                          ->setData('pinepg_product_discount', $pinelabsProductDiscount)
@@ -228,42 +230,46 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
             }
 
             $combinedItemDiscount = $itemMagentoDiscount + $itemPinelabsDiscount;
-            $finalRowTotal = max(0, ($itemPrice * $qty) - $combinedItemDiscount);
-            $finalItemPrice = $qty > 0 ? $finalRowTotal / $qty : 0;
+            $finalRowTotal = max(0, $originalRowTotal - $combinedItemDiscount); // 40000 - 5369.75 = 34630.25
 
+            // Logging per item
             $this->logger->info(sprintf(
-                "Applying discounts to %s (SKU: %s) - Qty: %d, Original Price: %.2f, Magento Discount: %.2f, Pinelabs Discount: %.2f, Final Price: %.2f",
-                $item->getName(),
-                $item->getSku(),
-                $qty,
-                $itemPrice,
-                $itemMagentoDiscount,
-                $itemPinelabsDiscount,
-                $finalItemPrice
+                "Item: %s | SKU: %s | Qty: %d | Orig Price: ₹%.2f | Magento Disc: ₹%.2f | PinePG Disc: ₹%.2f | Row Total: ₹%.2f",
+                $item->getName(), $sku, $qty, $itemPrice, $itemMagentoDiscount, $itemPinelabsDiscount, $finalRowTotal
             ));
 
-            $item->setDiscountAmount($combinedItemDiscount)
+            // Set item values to maintain original price but show correct discounts
+            $item->setPrice($itemPrice)
+                 ->setBasePrice($itemPrice)
+                 ->setOriginalPrice($itemPrice)
+                 ->setBaseOriginalPrice($itemPrice)
+                 ->setRowTotal($originalRowTotal) // Show original subtotal (40000)
+                 ->setBaseRowTotal($originalRowTotal)
+                 ->setOriginalRowTotal($originalRowTotal)
+                 ->setBaseOriginalRowTotal($originalRowTotal)
+                 ->setDiscountAmount($combinedItemDiscount) // Show total discount (5369.75)
                  ->setBaseDiscountAmount($combinedItemDiscount)
-                 ->setRowTotal($finalRowTotal)
-                 ->setBaseRowTotal($finalRowTotal)
-                 ->setPrice($finalItemPrice)
-                 ->setBasePrice($finalItemPrice);
+                 ->setRowTotalInclTax($finalRowTotal) // This will show as "Row Total" in admin (34630.25)
+                 ->setBaseRowTotalInclTax($finalRowTotal);
 
             $orderItemRepository->save($item);
 
             $totalMagentoDiscount += $itemMagentoDiscount;
             $totalPinelabsDiscount += $itemPinelabsDiscount;
-            $newGrandTotal += $finalRowTotal;
+            $newGrandTotal += $finalRowTotal; // Add the discounted amount to grand total
         }
 
-        // Add shipping if applicable
+        // Add shipping if present
         $shipping = $order->getShippingAmount();
         $newGrandTotal += $shipping;
 
         $totalDiscount = $totalMagentoDiscount + $totalPinelabsDiscount;
 
+        // Update order totals
         $order->setDiscountAmount(-$totalDiscount)
               ->setBaseDiscountAmount(-$totalDiscount)
+              ->setSubtotal($order->getSubtotal()) // Maintain original subtotal
+              ->setBaseSubtotal($order->getBaseSubtotal())
               ->setGrandTotal($newGrandTotal)
               ->setBaseGrandTotal($newGrandTotal)
               ->setTotalPaid($newGrandTotal)
@@ -272,7 +278,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
               ->setBaseTotalDue(0)
               ->setDiscountDescription('Magento Coupon + Pinelabs Gateway Discount');
 
-        // Update payment
+        // Update payment info
         $payment = $order->getPayment();
         if ($payment) {
             $payment->setAmountPaid($newGrandTotal)
@@ -295,20 +301,23 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
             $payment->save();
         }
 
+        // Add visible order history comment
         $order->addCommentToStatusHistory(
-            __('Applied discounts - Magento: ₹%1, Pinelabs: ₹%2. Final amount: ₹%3',
+            __('Magento Discount: ₹%1 | Pinelabs Discount: ₹%2 | Final Grand Total: ₹%3',
                 number_format($totalMagentoDiscount, 2),
                 number_format($totalPinelabsDiscount, 2),
                 number_format($newGrandTotal, 2))
-        );
+        )->setIsCustomerNotified(true);
 
         $this->logger->info(sprintf(
-            'Order %s: Final totals - Subtotal: ₹%.2f, Discount: ₹%.2f, Grand Total: ₹%.2f, Paid: ₹%.2f',
+            'Order #%s finalized | Subtotal: ₹%.2f | Magento Disc: ₹%.2f | PinePG Disc: ₹%.2f | Grand Total: ₹%.2f | Paid: ₹%.2f | Shipping: ₹%.2f',
             $order->getIncrementId(),
             $order->getSubtotal(),
-            $totalDiscount,
+            $totalMagentoDiscount,
+            $totalPinelabsDiscount,
             $newGrandTotal,
-            $newGrandTotal
+            $newGrandTotal,
+            $shipping
         ));
 
         $order->save();
@@ -318,6 +327,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
         throw $e;
     }
 }
+
 
 
 
