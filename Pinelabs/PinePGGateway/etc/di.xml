@@ -1,6 +1,28 @@
 <?xml version="1.0"?>
 
-<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:framework:ObjectManager/etc/config.xsd">
-	<preference for="Magento\Quote\Observer\Webapi\SubmitObserver" type="Pinelabs\PinePGGateway\Observer\PineSendEmailObserver" />		
-	<preference for="Magento\Checkout\Controller\Onepage\Failure" type="Pinelabs\PinePGGateway\Observer\PinePGFailure" />
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="urn:magento:framework:ObjectManager/etc/config.xsd">
+
+    <!-- Existing preferences -->
+    <preference for="Magento\Quote\Observer\Webapi\SubmitObserver" type="Pinelabs\PinePGGateway\Observer\PineSendEmailObserver" />
+    <preference for="Magento\Checkout\Controller\Onepage\Failure" type="Pinelabs\PinePGGateway\Observer\PinePGFailure" />
+
+    <!-- New invoice total collector -->
+    <type name="Magento\Sales\Model\Order\Invoice">
+        <arguments>
+            <argument name="totals" xsi:type="array">
+                <item name="pinelabs_discount" xsi:type="object">Pinelabs\PinePGGateway\Model\Total\Invoice\PinelabsDiscount</item>
+            </argument>
+        </arguments>
+    </type>
+
+    <!-- New creditmemo total collector -->
+    <type name="Magento\Sales\Model\Order\Creditmemo">
+        <arguments>
+            <argument name="totals" xsi:type="array">
+                <item name="pinelabs_discount" xsi:type="object">Pinelabs\PinePGGateway\Model\Total\Creditmemo\PinelabsDiscount</item>
+            </argument>
+        </arguments>
+    </type>
+
 </config>
