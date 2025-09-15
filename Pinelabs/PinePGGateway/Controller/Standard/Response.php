@@ -17,6 +17,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
     protected $customer;
     protected $customerSession;
     protected $checkoutSession;
+    protected $logger;
 
     public function __construct(
         \Magento\Framework\App\Action\Context $context,
@@ -45,13 +46,12 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
         $this->customer = $customer;
         $this->customerSession = $customerSession;
         $this->checkoutSession = $checkoutSession;
+        $this->logger = $logger;
     }
     
 	public function execute()
     {
-		$writer = new \Zend_Log_Writer_Stream(BP . '/var/log/PinePG/'.date("Y-m-d").'.log');
-        $this->logger = new \Zend_Log();
-        $this->logger->addWriter($writer);
+		
         $resultRedirect = $this->resultRedirectFactory->create();
 
         try {
@@ -114,7 +114,7 @@ class Response extends \Pinelabs\PinePGGateway\Controller\PinePGAbstract {
                     $this->_cancelPayment('Payment fails');
                     $resultRedirect->setPath('checkout/onepage/failure');
                     return $resultRedirect;
-                }
+                } 
 
                 $order->setState('processing')->setStatus('processing');
 
