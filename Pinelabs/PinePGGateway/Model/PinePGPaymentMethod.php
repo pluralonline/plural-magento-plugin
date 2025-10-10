@@ -112,7 +112,24 @@ class PinePGPaymentMethod extends \Magento\Payment\Model\Method\AbstractMethod
     $this->logger->info("Order ID: ".$order->getIncrementId());
     
     // Convert amounts to paisa (×100)
-    $grandTotal = round($order->getBaseGrandTotal(), 2) * 100;
+    // Get the base grand total
+$baseGrandTotal = $order->getBaseGrandTotal();
+
+// Log the raw value before rounding
+$this->logger->info('PinePG Payment: Base grand total value before rounding', [
+    'order_id' => $order->getIncrementId(),
+    'base_grand_total' => $baseGrandTotal
+]);
+
+// Safely round and multiply
+$grandTotal = round((float) ($baseGrandTotal ?? 0), 2) * 100;
+
+// Log the final calculated grand total
+$this->logger->info('PinePG Payment: Calculated grand total (after rounding * 100)', [
+    'order_id' => $order->getIncrementId(),
+    'grand_total' => $grandTotal
+]);
+
     $discountAmount = abs($order->getBaseDiscountAmount()) * 100;
     $shippingAmount = $order->getBaseShippingAmount() * 100;
     $taxAmount = $order->getBaseTaxAmount() * 100;
