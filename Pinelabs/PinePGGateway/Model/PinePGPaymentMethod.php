@@ -122,7 +122,7 @@ $this->logger->info('PinePG Payment: Base grand total value before rounding', [
 ]);
 
 // Safely round and multiply
-$grandTotal = round((float) ($baseGrandTotal ?? 0), 2) * 100;
+$grandTotal = $this->toPaisa($order->getBaseGrandTotal());
 
 // Log the final calculated grand total
 $this->logger->info('PinePG Payment: Calculated grand total (after rounding * 100)', [
@@ -130,9 +130,9 @@ $this->logger->info('PinePG Payment: Calculated grand total (after rounding * 10
     'grand_total' => $grandTotal
 ]);
 
-    $discountAmount = abs($order->getBaseDiscountAmount()) * 100;
-    $shippingAmount = $order->getBaseShippingAmount() * 100;
-    $taxAmount = $order->getBaseTaxAmount() * 100;
+    $discountAmount = $this->toPaisa($order->getBaseDiscountAmount());
+    $shippingAmount = $this->toPaisa($order->getBaseShippingAmount());
+    $taxAmount      = $this->toPaisa($order->getBaseTaxAmount());
 
     $this->logger->info("Base Amounts:");
     $this->logger->info(sprintf("Grand Total: %.2f (%d paisa)", $grandTotal/100, $grandTotal));
@@ -154,7 +154,7 @@ $this->logger->info('PinePG Payment: Calculated grand total (after rounding * 10
     $hasProductLevelDiscount = false;
     
     foreach ($items as $item) {
-        $itemDiscount = abs($item->getDiscountAmount()) * 100;
+        $itemDiscount = $this->toPaisa($item->getDiscountAmount());
         if ($itemDiscount > 0) {
             $hasProductLevelDiscount = true;
             break;
@@ -165,7 +165,8 @@ $this->logger->info('PinePG Payment: Calculated grand total (after rounding * 10
         $price = round($item->getPrice(), 2) * 100;
         $qty = (int)$item->getQtyOrdered();
         $itemTotal = $price * $qty;
-        $itemDiscount = abs($item->getDiscountAmount()) * 100;
+        $itemDiscount = $this->toPaisa($item->getDiscountAmount());
+
         
         // For cart-level discount, distribute discount equally among items
         if (!$hasProductLevelDiscount && $discountAmount > 0) {
@@ -225,10 +226,12 @@ $this->logger->info('PinePG Payment: Calculated grand total (after rounding * 10
     $this->logger->info(sprintf("= Calculated Total: %.2f", $calculatedTotal/100));
     $this->logger->info(sprintf("Order Grand Total: %.2f", $grandTotal/100));
 
-    if (abs($grandTotal - $calculatedTotal) > 1) {
+    if (abs((int)$grandTotal - (int)$calculatedTotal) > 1) {
+        $diffPaisa = abs((int) $grandTotal - (int) $calculatedTotal);
+        $diffRupee = $diffPaisa / 100;
         $this->logger->err(sprintf(
             "AMOUNT MISMATCH: Difference of %.2f detected!", 
-            abs($grandTotal - $calculatedTotal)/100
+            $diffRupee
         ));
     }
 
@@ -282,6 +285,12 @@ $this->logger->info('PinePG Payment: Calculated grand total (after rounding * 10
 
     return $params;
 }
+
+
+    public function toPaisa($amount): int
+    {
+        return (int) round(abs((float) ($amount ?? 0)) * 100);
+    }
 	 
 	  //validate response
     public function validateResponse($returnParams) {
